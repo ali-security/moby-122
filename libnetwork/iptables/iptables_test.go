@@ -289,3 +289,54 @@ func TestExistsRaw(t *testing.T) {
 		}
 	}
 }
+
+func TestFlushChain(t *testing.T) {
+	_ = firewalldInit()
+	if UsingFirewalld() {
+		t.Skip("firewalld in host netns cannot create rules in the test's netns")
+	}
+	defer netnsutils.SetupTestOSContext(t)()
+
+	iptable := GetIptable(IPv4)
+	chain := "TESTFLUSHCHAIN"
+	table := Filter
+
+	// Ensure the chain exists
+	if err := iptable.RemoveExistingChain(chain, table); err != nil {
+		t.Fatal(err)
+	}
+	_, err := iptable.NewChain(chain, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a rule to the chain
+	if err := iptable.RawCombinedOutput("-A", chain, "-j", "ACCEPT"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Flush the chain
+	if err := iptable.FlushChain(table, chain); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check that the chain exists and is empty (only the chain definition remains)
+	out, err := iptable.Raw("-S", chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Count rules (excluding the chain policy line)
+	rulesCount := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "-A "+chain) {
+			rulesCount++
+		}
+	}
+	if rulesCount != 0 {
+		t.Fatalf("Expected 0 rules after flush, got %d", rulesCount)
+	}
+
+	// Cleanup
+	_ = iptable.RemoveExistingChain(chain, table)
+}
